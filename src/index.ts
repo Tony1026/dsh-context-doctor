@@ -27,6 +27,56 @@ export type { AuditReport } from './audit.ts'
 export const name = 'context-doctor'
 export const inject = ['fs', 'skills', 'tools', 'sessions'] as const
 
+/**
+ * `settings` 服务的两种形态：DSH 0.1.x 用 `get(ns)` 返回该 namespace 的
+ * resolved 值；0.2.x 移除了 `get`，改为 `describe()` 返回全部 volatile 表单。
+ * 两个方法都按可选探测，谁在就用谁。
+ */
+interface SettingsServiceLike {
+  get?(ns: string): unknown
+  describe?(): unknown
+}
+
+/** 普通对象判定：settings 区段与 `describe()` 的表单项都必须是它。 */
+function isSettingsSection(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * 读一个 settings namespace 的当前值，同时兼容 DSH 0.1.x 与 0.2.x。
+ *
+ * - 0.1.x：`settings.get(ns)` 直接返回该 namespace 的 resolved 值。
+ * - 0.2.x：`settings.describe()` 返回表单数组，每项形如
+ *   `{ ns, value, user, base, … }`；`ns` 是该行在 profile 树里的条目 id——
+ *   语言这行的 id 就是 `locale`（见 `@deepseek-ai/dsh-web-app/cordis.patch.yml`），
+ *   与 {@link LOCALE_SETTINGS_NAMESPACE} 相同，两边取的是同一个 namespace。
+ *
+ * 任何一步读不出来都返回 undefined：语言偏好读不到只该让报告退回英文，不该让
+ * 整次审计失败（0.2.x 上 `get` 不存在，正是这一点让 context_audit 直接抛错）。
+ */
+function readSettingsSection(settings: unknown, ns: string): Record<string, unknown> | undefined {
+  const service = settings as SettingsServiceLike | undefined
+  try {
+    if (typeof service?.get === 'function') {
+      const value = service.get(ns)
+      if (isSettingsSection(value)) return value
+    }
+    if (typeof service?.describe === 'function') {
+      const forms = service.describe()
+      if (Array.isArray(forms)) {
+        for (const form of forms) {
+          if (!isSettingsSection(form) || form.ns !== ns) continue
+          if (isSettingsSection(form.value)) return form.value
+          if (isSettingsSection(form.user)) return form.user
+        }
+      }
+    }
+  } catch {
+    // 读不到就回退英文，见上面的说明。
+  }
+  return undefined
+}
+
 /** 插件配置。 */
 export interface Config {
   /** 审计默认目录（浏览器面板不带 cwd 参数时使用；缺省为进程启动目录）。 */
@@ -42,14 +92,14 @@ export function apply(ctx: Context, config: Config = {}): void {
    * 报告语言（issue #11）。宿主把显式选择存在 settings 的 `locale.preference`，
    * 但该字段可缺省，缺省即「跟随浏览器」——host 看不见浏览器，只能回退英文。
    * 浏览器面板不受这个限制：它在请求里显式带上自己的语言（见 routes.ts）。
+   *
+   * 读法随 DSH 版本而变，见 {@link readSettingsSection}：0.1.x 是 `get(ns)`，
+   * 0.2.x 是 `describe()`。
    */
-  const reportLocale = (): HostLocaleId => {
-    const settings = ctx.get('settings') as
-      { get(ns: string): unknown } | undefined
-    const section = settings?.get(LOCALE_SETTINGS_NAMESPACE) as
-      Record<string, unknown> | undefined
-    return resolveHostLocale(section?.[LOCALE_PREFERENCE_FIELD])
-  }
+  const reportLocale = (): HostLocaleId =>
+    resolveHostLocale(
+      readSettingsSection(ctx.get('settings'), LOCALE_SETTINGS_NAMESPACE)?.[LOCALE_PREFERENCE_FIELD],
+    )
 
   // 1. 模型工具。
   //
