@@ -15,7 +15,7 @@
  * the system fell back to.
  */
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import type { PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { AuditReport } from '../audit.ts'
@@ -202,10 +202,18 @@ export function ContextAuditRing(props: ContextAuditRingProps): ReactElement {
     })
   }, [actions, sessionId])
 
+  // 挂载时取一次，喂给触发器上的状态色。
   useEffect(() => {
     refresh()
     return () => controllerRef.current?.abort()
   }, [refresh])
+
+  // 打开面板再取一次。数据是审计快照，只靠挂载取数的话，面板显示的永远是
+  // 「组件挂载那一刻」的读数——用户几分钟后打开看到的就是过期数字，
+  // 必须手点刷新（issue #14）。取数很轻（宿主侧还有 60s 缓存），打开即取。
+  useEffect(() => {
+    if (open) refresh()
+  }, [open, refresh])
 
   // Dismiss on Escape or on any pointer landing outside the control.
   useEffect(() => {
@@ -291,10 +299,19 @@ export function ContextAuditRing(props: ContextAuditRingProps): ReactElement {
                     height: '100%',
                   }} />)}
               </span>
-              {THRESHOLDS.map(threshold => <span key={threshold} aria-hidden="true"
-                style={{ ...tickStyle, left: `${(threshold / FULL_SCALE) * 100}%` }}>
-                <span style={tickLabelStyle}>{formatTokens(threshold)}</span>
-              </span>)}
+              {/*
+                刻线与标签都是轨道的**兄弟**节点，标签不嵌在 1px 宽的刻线里：
+                那样它的 shrink-to-fit 可用宽度只有 0.5px，宿主或其它插件只要带上
+                「最小内容宽度 = 一个字符」的全局规则（overflow-wrap: anywhere 之类），
+                标签就会逐字竖排成 6px 宽的窄条（issue #14）。
+              */}
+              {THRESHOLDS.map(threshold => {
+                const at = `${(threshold / FULL_SCALE) * 100}%`
+                return <Fragment key={threshold}>
+                  <span aria-hidden="true" style={{ ...tickStyle, left: at }} />
+                  <span aria-hidden="true" style={{ ...tickLabelStyle, left: at }}>{formatTokens(threshold)}</span>
+                </Fragment>
+              })}
             </div>
           </div>
 
@@ -382,7 +399,7 @@ const readPercentStyle: CSSProperties = { marginLeft: 'auto', color: TONE.muted,
 const railStyle: CSSProperties = { position: 'relative', height: 23, marginTop: 11 }
 const railTrackStyle: CSSProperties = { position: 'absolute', inset: '0 0 auto', display: 'flex', height: 8, overflow: 'hidden', background: TONE.sunk, borderRadius: 3 }
 const tickStyle: CSSProperties = { position: 'absolute', top: 0, width: 1, height: 12, background: TONE.borderStrong }
-const tickLabelStyle: CSSProperties = { position: 'absolute', top: 13, left: '50%', transform: 'translateX(-50%)', color: TONE.quiet, fontFamily: MONO, fontSize: 9.5, fontVariantNumeric: 'tabular-nums' }
+const tickLabelStyle: CSSProperties = { position: 'absolute', top: 13, transform: 'translateX(-50%)', whiteSpace: 'nowrap', color: TONE.quiet, fontFamily: MONO, fontSize: 9.5, fontVariantNumeric: 'tabular-nums' }
 
 const tableStyle: CSSProperties = { margin: '16px 0 0', padding: 0, listStyle: 'none', borderTop: `1px solid ${TONE.border}` }
 const rowStyle: CSSProperties = { display: 'grid', width: '100%', gridTemplateColumns: '3px minmax(0, 1fr) 62px 40px', alignItems: 'center', columnGap: 11, padding: '10px 16px', color: TONE.text, background: 'transparent', border: 0, borderBottom: `1px solid ${TONE.border}`, textAlign: 'left', font: 'inherit' }
