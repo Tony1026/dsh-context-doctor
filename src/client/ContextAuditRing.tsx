@@ -195,8 +195,13 @@ export function ContextAuditRing(props: ContextAuditRingProps): ReactElement {
       if (dock === null) return
       // dock 顶部往下留 12px 与输入框的间距，再留 12px 视口边距。
       const available = dock.getBoundingClientRect().top - 24
-      // 同时不突破原有的 70vh / 620px 上限；下限保证面板仍可用。
-      setPanelMaxHeight(Math.max(180, Math.min(window.innerHeight * 0.7, 620, available)))
+      // 上限取三者最小：70vh、620px、真实可用高度。
+      //
+      // 这里刻意**不设下限**：任何下限一旦超过 available，面板顶部又会越过视口
+      // 上沿，而溢出的是面板自己的盒子——内部滚动只能滚内容，救不回 header。
+      // 可用空间极小时就让它缩到极小并内部滚动，也好过显示一个「看起来正常、
+      // 实际少了顶部」的面板。
+      setPanelMaxHeight(Math.max(0, Math.min(window.innerHeight * 0.7, 620, available)))
     }
     measure()
     window.addEventListener('resize', measure)

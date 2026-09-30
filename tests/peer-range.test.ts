@@ -103,6 +103,15 @@ function caretAdmits(version: string, range: string): boolean {
         `未支持的 caret 写法 ${JSON.stringify(alternative)}——请改用 semver 或扩展本辅助函数`,
       )
     }
+    /**
+     * 注意：**不**给普通下界补 `-0`。`includePrerelease` 并不会把 `^1.2.3`
+     * 展开成 `>=1.2.3-0` —— semver 的 `replaceCaret` 里 `z = '-0'` 只用于
+     * `isX(minor)` / `isX(patch)` 两个分支，普通 `X.Y.Z` 的 "no pr" 分支不用它。
+     * 实测 semver 7.8.5（DSH 归档自带）：
+     *   new Range('^1.2.3', { includePrerelease: true }).range === '>=1.2.3 <2.0.0-0'
+     *   satisfies('1.2.3-rc.1', '^1.2.3', { includePrerelease: true }) === false
+     * 这一点反直觉，曾被自动 review 误报为缺陷。
+     */
     const low = parseVersion(matched[1]!)!
     const high: ParsedVersion = low.major === 0
       ? { major: 0, minor: low.minor + 1, patch: 0, prerelease: [0] }
@@ -156,7 +165,9 @@ test('caretAdmits 自身与本仓库用到的 semver 语义一致', () => {
   assert.ok(caretAdmits('1.9.0', '^1.2.3'))
   assert.ok(!caretAdmits('2.0.0', '^1.2.3'), '>=1.0.0 的 caret 锁 major')
   assert.ok(!caretAdmits('1.2.2', '^1.2.3'))
-  assert.ok(!caretAdmits('1.2.3-rc.1', '^1.2.3'), '范围不含预发布时，预发布版本不放行')
+  assert.ok(!caretAdmits('1.2.3-rc.1', '^1.2.3'), '普通下界不补 -0，预发布被挡在下界之外')
+  assert.ok(!caretAdmits('0.2.0-rc.1', '^0.2.0'), '0.x 的普通下界同样不补 -0')
+  assert.ok(caretAdmits('1.2.3-rc.0', '^1.2.3-rc.0'), '带预发布的下界才放行同号预发布')
   assert.ok(caretAdmits('1.2.3-rc.2', '^1.2.3-rc.1'), '同一 major.minor.patch 的预发布放行')
   assert.ok(caretAdmits('0.1.9', '^0.1.0'), '0.x 的 caret 锁 minor，0.1.x 全放行')
   assert.ok(!caretAdmits('0.2.0', '^0.1.0'), '0.x 的 caret 锁 minor，不进 0.2.x')
