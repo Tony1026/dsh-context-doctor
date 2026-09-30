@@ -15,7 +15,7 @@
  * the system fell back to.
  */
 
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import type { PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { AuditReport } from '../audit.ts'
@@ -176,6 +176,32 @@ export function ContextAuditRing(props: ContextAuditRingProps): ReactElement {
   const [expanded, setExpanded] = useState<Segment['key'] | null>(null)
   const panelId = useId()
   const dockRef = useRef<HTMLSpanElement | null>(null)
+
+  /**
+   * 面板高度上限，按真实可用空间算。
+   *
+   * 面板锚在输入框（dock）上方，能用的高度是「dock 顶部 → 视口顶部」，
+   * 而不是视口高度的某个百分比：窗口越矮、或插件越多导致面板内容越高，
+   * `70vh` 就越会超出这个空间，header 被顶出视口。面板自身的 `overflow`
+   * 也救不回来——溢出的是它自己的盒子，滚动只滚内容，盒子顶部不动。
+   *
+   * undefined 表示尚未测量（首帧），此时沿用样式表里的保守默认值。
+   */
+  const [panelMaxHeight, setPanelMaxHeight] = useState<number | undefined>(undefined)
+  useLayoutEffect(() => {
+    if (!open) return undefined
+    const measure = (): void => {
+      const dock = dockRef.current
+      if (dock === null) return
+      // dock 顶部往下留 12px 与输入框的间距，再留 12px 视口边距。
+      const available = dock.getBoundingClientRect().top - 24
+      // 同时不突破原有的 70vh / 620px 上限；下限保证面板仍可用。
+      setPanelMaxHeight(Math.max(180, Math.min(window.innerHeight * 0.7, 620, available)))
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [open])
   const controllerRef = useRef<AbortController | null>(null)
 
   const refresh = useCallback(() => {
@@ -270,7 +296,8 @@ export function ContextAuditRing(props: ContextAuditRingProps): ReactElement {
       <PulseIcon size={16} />
     </button>
 
-    {open && <section id={panelId} role="dialog" aria-label={t('cd.title')} style={panelStyle}>
+    {open && <section id={panelId} role="dialog" aria-label={t('cd.title')}
+      style={panelMaxHeight === undefined ? panelStyle : { ...panelStyle, maxHeight: panelMaxHeight }}>
       <header style={headStyle}>
         <span style={eyebrowStyle}>{t('cd.title')}</span>
         <span style={{ ...statusStyle, color: accent }}>
